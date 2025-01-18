@@ -3,8 +3,8 @@ package shader
 
 cubeVertexSource := `#version 460 core
 layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aColor;
-layout (location = 2) in vec3 instanceOffset;
+layout (location = 1) in vec3 instanceOffset;
+layout (location = 2) in vec3 instanceColor;
 
 out vec3 ourColor;
 
@@ -20,7 +20,7 @@ void main() {
     instanceOffset.x, instanceOffset.y, instanceOffset.z, 1.0
     );
     gl_Position = projection * view * model * vec4(aPos, 1.0);
-    ourColor = aColor;
+    ourColor = instanceColor;
 }
 `
 

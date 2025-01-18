@@ -7,7 +7,7 @@ import "core:math"
 import "core:math/linalg"
 import glm "core:math/linalg/glsl"
 import "vendor:glfw"
-
+import sdl "vendor:sdl2"
 vec3 :: linalg.Vector3f32
 
 
@@ -61,21 +61,22 @@ new :: proc(
 
 processKeyboard :: proc(c: ^Camera) {
 	using gs
+	keys := sdl.GetKeyboardState(nil)
 
 	movementVector: vec3 = {}
-	normalizedFront := linalg.normalize(c.front)
-	normalizedRight := linalg.normalize(c.right)
+	normalizedFront := linalg.normalize(vec3{c.front.x, 0, c.front.z})
+	normalizedRight := linalg.normalize(vec3{c.right.x, 0, c.right.z})
 
-	if glfw.GetKey(window, glfw.KEY_W) == glfw.PRESS {
+	if keys[sdl.SCANCODE_W] != 0 {
 		movementVector += normalizedFront // Move forward
 	}
-	if glfw.GetKey(window, glfw.KEY_S) == glfw.PRESS {
+	if keys[sdl.SCANCODE_S] != 0 {
 		movementVector -= normalizedFront // Move backward
 	}
-	if glfw.GetKey(window, glfw.KEY_A) == glfw.PRESS {
+	if keys[sdl.SCANCODE_A] != 0 {
 		movementVector -= normalizedRight // Move left
 	}
-	if glfw.GetKey(window, glfw.KEY_D) == glfw.PRESS {
+	if keys[sdl.SCANCODE_D] != 0 {
 		movementVector += normalizedRight // Move right
 	}
 
@@ -85,7 +86,8 @@ processKeyboard :: proc(c: ^Camera) {
 	// fmt.printf("len : %v\n", linalg.length(movementVector))
 
 	if linalg.length(movementVector) > 0 {
-		c.pos += glm.normalize(movementVector) * velocity
+		delta := glm.normalize(movementVector) * velocity
+		c.pos += vec3{delta.x, 0, delta.z}
 	}
 	// fmt.printf("c pos: %v\n", c.pos)
 

@@ -9,50 +9,65 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
+import "core:mem"
 import "core:time"
 import "draw"
 import "gs"
+import "physics"
 import "shader"
 import gl "vendor:OpenGL"
-import "vendor:glfw"
-c: camera.Camera = camera.new()
+import sdl "vendor:sdl2"
+
+
+Player :: struct {
+	using physics: physics.Physics,
+	camera:        camera.Camera,
+}
+
 
 lastCubePlaced: f64 = -1
+player := Player {
+	camera = camera.new(),
+	mass   = 1,
+	iMass  = 1,
+}
 main :: proc() {
-	// when ODIN_DEBUG {
-	// 	track: mem.Tracking_Allocator
-	// 	mem.tracking_allocator_init(&track, context.allocator)
-	// 	context.allocator = mem.tracking_allocator(&track)
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
 
-	// 	defer {
-	// 		if len(track.allocation_map) > 0 {
-	// 			fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
-	// 			for _, entry in track.allocation_map {
-	// 				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
-	// 			}
-	// 		}
-	// 		if len(track.bad_free_array) > 0 {
-	// 			fmt.eprintf("=== %v incorrect frees: ===\n", len(track.bad_free_array))
-	// 			for entry in track.bad_free_array {
-	// 				fmt.eprintf("- %p @ %v\n", entry.memory, entry.location)
-	// 			}
-	// 		}
-	// 		mem.tracking_allocator_destroy(&track)
-	// 	}
-	// }
+		defer {
+			if len(track.allocation_map) > 0 {
+				fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+				for _, entry in track.allocation_map {
+					fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				}
+			}
+			if len(track.bad_free_array) > 0 {
+				fmt.eprintf("=== %v incorrect frees: ===\n", len(track.bad_free_array))
+				for entry in track.bad_free_array {
+					fmt.eprintf("- %p @ %v\n", entry.memory, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&track)
+		}
+	}
 
-	glfwInit()
+	// defer free(ptr)
+	sdlInit()
+	defer sdlClean()
 
 	using gs
 
 	draw.initCube()
 	defer draw.cleanup()
 	// Render loop
-	lastCubePlaced = glfw.GetTime()
+	lastCubePlaced = f64(sdl.GetTicks()) / 1000.0
 
 
-	gridWidth :: 10
-	gridHeight :: 10
+	gridWidth :: 100
+	gridHeight :: 100
 	cubes := [gridHeight * gridWidth]draw.Cube{}
 
 
@@ -60,7 +75,7 @@ main :: proc() {
 		for z in 0 ..< gridHeight {
 			index := z * gridWidth + x
 			cubes[index] = draw.Cube {
-				color = {}, // Default color
+				color = {rand.float32() * 255, rand.float32() * 255, rand.float32() * 255}, // Default color
 				pos   = {f32(x) - gridWidth / 2, -1, f32(z) - gridHeight / 2},
 			}
 		}
@@ -70,7 +85,9 @@ main :: proc() {
 
 
 	lastFrame = time.now()
-	for !glfw.WindowShouldClose(window) {
+	running := true
+	for running {
+		defer free_all(context.temp_allocator)
 
 		currentFrame := time.now()
 		deltaTime = f32(time.duration_seconds(time.since(lastFrame)))
@@ -81,7 +98,26 @@ main :: proc() {
 		// 	draw.addCube({pos = {rand.float32() * 4, 1, rand.float32() * 4}, color = {0, 0, 0}})
 		// 	lastCubePlaced = startTime
 		// }
-		processKeyboardInput(window)
+
+		e: sdl.Event
+		for sdl.PollEvent(&e) {
+			#partial switch e.type {
+			case .QUIT:
+				running = false
+			case .MOUSEMOTION:
+				mouseMovement := cast(^sdl.MouseMotionEvent)&e
+				handleMouseMotion(mouseMovement)
+			case .KEYDOWN:
+				keyEvent := cast(^sdl.KeyboardEvent)&e
+				if keyEvent.keysym.sym == .ESCAPE {
+					running = false
+				}
+
+			}
+		}
+		processKeyboardInput()
+		physics.applyGravity(&player, player.camera.pos)
+		player.camera.pos += physics.applyKinematics(&player, deltaTime)
 
 		gl.ClearColor(0.2, 0.3, 0.3, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -93,12 +129,10 @@ main :: proc() {
 		//TODO: remove this ductape. there should be a global way to set the needed camera uniforms
 		gl.UseProgram(draw.cp.program)
 
-		camera.frameUpdate(&c, draw.cp.program)
-
+		camera.frameUpdate(&player.camera, draw.cp.program)
 		draw.drawCubes()
 
-		glfw.SwapBuffers(window)
-		glfw.PollEvents()
+		sdl.GL_SwapWindow(window)
 
 		actualDeltaTime := time.duration_seconds(time.since(currentFrame))
 		if actualDeltaTime < FRAME_DURATION {
@@ -110,44 +144,46 @@ main :: proc() {
 
 }
 
-glfwInit :: proc() {
+sdlInit :: proc() {
 	using gs
 
-	assert(glfw.Init() == true)
+	sdl.Init(sdl.INIT_VIDEO)
 
-	glfw.WindowHint(glfw.CONTEXT_VERSION_MAJOR, OPENGL_MAJOR)
-	glfw.WindowHint(glfw.CONTEXT_VERSION_MINOR, OPENGL_MINOR)
-	glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+	sdl.GL_SetAttribute(.CONTEXT_MAJOR_VERSION, OPENGL_MAJOR)
+	sdl.GL_SetAttribute(.CONTEXT_MINOR_VERSION, OPENGL_MINOR)
+	sdl.GL_SetAttribute(.CONTEXT_PROFILE_MASK, i32(sdl.GLprofile.CORE))
+	sdl.GL_SetAttribute(.DOUBLEBUFFER, 1)
+	sdl.GL_SetAttribute(.DEPTH_SIZE, 24)
 
-	glfw.WindowHint(glfw.OPENGL_DEBUG_CONTEXT, 1)
-
-
-	when ODIN_OS == .Darwin {
-		glfw.WindowHint(glfw.OPENGL_FORWARD_COMPAT, 1)
-	}
-
-	gs.window = glfw.CreateWindow(SCR_WIDTH, SCR_HEIGHT, "Vexor", nil, nil)
+	window = sdl.CreateWindow(
+		"Vexor",
+		sdl.WINDOWPOS_CENTERED,
+		sdl.WINDOWPOS_CENTERED,
+		SCR_WIDTH,
+		SCR_HEIGHT,
+		{.OPENGL, .SHOWN},
+	)
 	assert(window != nil)
 
-	glfw.MakeContextCurrent(window)
-	glfw.SwapInterval(1)
+	gl_context := sdl.GL_CreateContext(window)
+	assert(gl_context != nil)
+	sdl.GL_MakeCurrent(window, gl_context)
+	gl.load_up_to(OPENGL_MAJOR, OPENGL_MINOR, sdl.gl_set_proc_address)
+	sdl.GL_SetSwapInterval(1) // Enable VSync
 
-	gl.load_up_to(OPENGL_MAJOR, OPENGL_MINOR, glfw.gl_set_proc_address)
-	glfw.SetInputMode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
+	// gl.load_up_to(OPENGL_MAJOR, OPENGL_MINOR, sdl.GL_GetProcAddress())
+	sdl.SetRelativeMouseMode(true)
 
-	glfw.SetCursorPosCallback(window, mouseCallback)
 	gl.Enable(gl.DEPTH_TEST)
 	enableGlDebug()
-
 }
-glfwClean :: proc() {
+sdlClean :: proc() {
 	using gs
-
 	assert(window != nil)
-	glfw.DestroyWindow(window)
-	glfw.Terminate()
-
+	sdl.DestroyWindow(window)
+	sdl.Quit()
 }
+
 lastX: f64 = 0
 lastY: f64 = 0
 direction: vec3
@@ -155,28 +191,22 @@ yaw: f32 = -90.0
 pitch: f32 = 0
 firstMouse := true
 
-mouseCallback :: proc "c" (window: glfw.WindowHandle, xPos: f64, yPos: f64) {
+handleMouseMotion :: proc(event: ^sdl.MouseMotionEvent) {
 
 	if firstMouse {
-		lastX = xPos
-		lastY = yPos
+		lastX = f64(event.x)
+		lastY = f64(event.y)
 		firstMouse = false
-		// return
+		return
 	}
 
-	xOffset: f32 = f32(xPos - lastX)
-	yOffset: f32 = f32(lastY - yPos)
+	xOffset := f32(event.xrel)
+	yOffset := -f32(event.yrel)
 
-	lastX = xPos
-	lastY = yPos
-	context = runtime.default_context()
-	camera.processMouseMovement(&c, xOffset, yOffset)
+	camera.processMouseMovement(&player.camera, xOffset, yOffset)
 }
-processKeyboardInput :: proc(window: glfw.WindowHandle) {
-	if glfw.GetKey(window, glfw.KEY_ESCAPE) == glfw.PRESS {
-		glfw.SetWindowShouldClose(window, true)
-	}
-	camera.processKeyboard(&c)
+processKeyboardInput :: proc() {
+	keys := sdl.GetKeyboardState(nil)
 
-
+	camera.processKeyboard(&player.camera)
 }

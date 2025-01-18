@@ -11,18 +11,17 @@ import vmem "core:mem/virtual"
 import gl "vendor:OpenGL"
 import "vendor:glfw"
 
-MAX_CUBES :: 1024
+MAX_CUBES :: 1024 * 1024
 
 Cube :: struct {
 	color: vec3,
 	pos:   vec3,
 }
 
-
 CubeProgram :: struct {
-	program, vao, vbo, instanceVBO: u32,
-	lastCubeIndex:                  i32,
-	cubes:                          [MAX_CUBES]Cube,
+	program, vao, vbo, instanceVBO, colorVBO: u32,
+	lastCubeIndex:                            i32,
+	cubes:                                    [MAX_CUBES]Cube,
 }
 
 
@@ -45,20 +44,20 @@ initCube :: proc() {
 	gl.BindVertexArray(vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, size_of(cubeVertices), &cubeVertices[0], gl.STATIC_DRAW)
-
-
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, size_of(Vertex), 0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, size_of(Vertex), 0) //position
 	gl.EnableVertexAttribArray(0)
-
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, gl.FALSE, size_of(Vertex), size_of(vec3))
-	gl.EnableVertexAttribArray(1)
 
 
 	gl.GenBuffers(1, &cp.instanceVBO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, cp.instanceVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, MAX_CUBES * size_of(vec3), nil, gl.DYNAMIC_DRAW)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, gl.FALSE, size_of(vec3), 0)
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribDivisor(1, 1)
 
-
+	gl.GenBuffers(1, &cp.colorVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, cp.colorVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, MAX_CUBES * size_of(vec3), nil, gl.DYNAMIC_DRAW)
 	gl.VertexAttribPointer(2, 3, gl.FLOAT, gl.FALSE, size_of(vec3), 0)
 	gl.EnableVertexAttribArray(2)
 	gl.VertexAttribDivisor(2, 1)
@@ -85,15 +84,29 @@ initCube :: proc() {
 
 // }
 addCube :: proc(cube: Cube) {
-	assert(cp.lastCubeIndex < MAX_CUBES - 2)
+	assert(cp.lastCubeIndex < MAX_CUBES - 1)
+
+
 	cp.cubes[cp.lastCubeIndex] = cube
 	cp.lastCubeIndex += 1
 
 	pos := cube.pos
-
-
 	gl.BindBuffer(gl.ARRAY_BUFFER, cp.instanceVBO)
-	gl.BufferSubData(gl.ARRAY_BUFFER, int(cp.lastCubeIndex) * size_of(vec3), size_of(vec3), &pos)
+	gl.BufferSubData(
+		gl.ARRAY_BUFFER,
+		int(cp.lastCubeIndex - 1) * size_of(vec3),
+		size_of(vec3),
+		raw_data(pos[:]),
+	)
+
+	color := cube.color
+	gl.BindBuffer(gl.ARRAY_BUFFER, cp.colorVBO)
+	gl.BufferSubData(
+		gl.ARRAY_BUFFER,
+		int(cp.lastCubeIndex - 1) * size_of(vec3),
+		size_of(vec3),
+		raw_data(color[:]),
+	)
 }
 
 addCubes :: proc(cubes: []Cube) {
@@ -105,10 +118,12 @@ addCubes :: proc(cubes: []Cube) {
 	copy(cp.cubes[prevIndex:prevIndex + totalToAdd], cubes)
 
 	cp.lastCubeIndex += totalToAdd
-	pos := cp.cubes[prevIndex]
-	positions := make([]vec3, len(cubes))
+	positions := make([]vec3, len(cubes), context.temp_allocator)
+	colors := make([]vec3, len(cubes), context.temp_allocator)
+
 	for cube, i in cubes {
 		positions[i] = cube.pos
+		colors[i] = linalg.normalize(cube.color)
 	}
 
 	gl.BindBuffer(gl.ARRAY_BUFFER, cp.instanceVBO)
@@ -119,13 +134,18 @@ addCubes :: proc(cubes: []Cube) {
 		raw_data(positions),
 	)
 
+	gl.BindBuffer(gl.ARRAY_BUFFER, cp.colorVBO)
+	gl.BufferSubData(
+		gl.ARRAY_BUFFER,
+		int(prevIndex * size_of(vec3)),
+		int(totalToAdd * size_of(vec3)),
+		raw_data(colors),
+	)
+
 }
 drawCubes :: proc() {
 	gl.UseProgram(cp.program)
 	gl.BindVertexArray(cp.vao)
-
-	// Draw all cubes in one call
-	fmt.println("cp.lastCubeIndex", cp.lastCubeIndex)
 	gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, cp.lastCubeIndex)
 }
 

@@ -28,6 +28,8 @@ createProgram :: proc(vertex_source, fragment_source: string) -> u32 {
 
 	return program
 }
+
+@(private)
 checkShaderErrors :: proc(shader: u32, shader_type: string) {
 	success: i32
 	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &success)
@@ -37,6 +39,8 @@ checkShaderErrors :: proc(shader: u32, shader_type: string) {
 		fmt.printf("ERROR::SHADER::%s::COMPILATION_FAILED\n%s\n", shader_type, string(info_log[:]))
 	}
 }
+
+@(private)
 checkProgramErrors :: proc(program: u32) {
 	success: i32
 	gl.GetProgramiv(program, gl.LINK_STATUS, &success)
