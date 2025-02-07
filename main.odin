@@ -1,8 +1,4 @@
 package main
-
-import "vendor:miniaudio"
-OPENGL_MAJOR :: 4
-OPENGL_MINOR :: 6
 import "base:runtime"
 import "camera"
 import "core:fmt"
@@ -16,8 +12,15 @@ import "gs"
 import "physics"
 import "shader"
 import gl "vendor:OpenGL"
+import "vendor:fontstash"
+import ui "vendor:microui"
+import "vendor:miniaudio"
+import "vendor:nanovg"
+import nvg "vendor:nanovg/gl"
 import sdl "vendor:sdl2"
 
+OPENGL_MAJOR :: 4
+OPENGL_MINOR :: 6
 
 Player :: struct {
 	using physics: physics.Physics,
@@ -31,6 +34,8 @@ player := Player {
 	mass   = 1,
 	iMass  = 1,
 }
+uiCtx: ui.Context
+
 main :: proc() {
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator
@@ -66,8 +71,8 @@ main :: proc() {
 	lastCubePlaced = f64(sdl.GetTicks()) / 1000.0
 
 
-	gridWidth :: 100
-	gridHeight :: 100
+	gridWidth :: 20
+	gridHeight :: 20
 	cubes := [gridHeight * gridWidth]draw.Cube{}
 
 
@@ -76,28 +81,27 @@ main :: proc() {
 			index := z * gridWidth + x
 			cubes[index] = draw.Cube {
 				color = {rand.float32() * 255, rand.float32() * 255, rand.float32() * 255}, // Default color
-				pos   = {f32(x) - gridWidth / 2, -1, f32(z) - gridHeight / 2},
+				pos   = {f32(x) - gridWidth / 2, -2, f32(z) - gridHeight / 2},
+				mass  = 1,
 			}
 		}
 	}
 	// assert(len(cubes) == 1, fmt.aprintf("len of cubes is actually %d", len(cubes)))
 	draw.addCubes(cubes[:])
 
-
+	draw.addCube({pos = {1, 20, 1}, color = {255, 255, 255}, mass = 1})
 	lastFrame = time.now()
 	running := true
+	gl.Enable(gl.CULL_FACE)
+	gl.CullFace(gl.BACK)
+
+	gl.FrontFace(gl.CW)
 	for running {
 		defer free_all(context.temp_allocator)
 
 		currentFrame := time.now()
 		deltaTime = f32(time.duration_seconds(time.since(lastFrame)))
 		lastFrame = currentFrame
-
-
-		// if (startTime - lastCubePlaced) >= 0.5 {
-		// 	draw.addCube({pos = {rand.float32() * 4, 1, rand.float32() * 4}, color = {0, 0, 0}})
-		// 	lastCubePlaced = startTime
-		// }
 
 		e: sdl.Event
 		for sdl.PollEvent(&e) {
@@ -116,15 +120,16 @@ main :: proc() {
 			}
 		}
 		processKeyboardInput()
-		physics.applyGravity(&player, player.camera.pos)
-		player.camera.pos += physics.applyKinematics(&player, deltaTime)
+		draw.updateDrawings()
+
+		// physics.applyGravity(&player, player.camera.pos)
+		// player.camera.pos += physics.applyKinematics(&player, player.camera.pos, deltaTime)
+		// player.camera.pos.y = max(player.camera.pos.y, 0)
+
 
 		gl.ClearColor(0.2, 0.3, 0.3, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		gl.Enable(gl.CULL_FACE)
-		gl.CullFace(gl.BACK)
-		gl.FrontFace(gl.CW) // or gl.CW depending on your winding order
 
 		//TODO: remove this ductape. there should be a global way to set the needed camera uniforms
 		gl.UseProgram(draw.cp.program)
@@ -132,6 +137,16 @@ main :: proc() {
 		camera.frameUpdate(&player.camera, draw.cp.program)
 		draw.drawCubes()
 
+		// ui.begin(&uiCtx)
+
+		// uiCtx.text_width = ui.default_atlas_text_width
+		// uiCtx.text_height = ui.default_atlas_text_height
+		// ui.text(&uiCtx, "hello world")
+		// draw.drawText("hello world", 400, 200)
+		// gl.ActiveTexture(gl.TEXTURE0)
+		// gl.BindTexture(gl.TEXTURE_2D, texture)
+
+		// gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
 		sdl.GL_SwapWindow(window)
 
 		actualDeltaTime := time.duration_seconds(time.since(currentFrame))
@@ -147,7 +162,7 @@ main :: proc() {
 sdlInit :: proc() {
 	using gs
 
-	sdl.Init(sdl.INIT_VIDEO)
+	assert(sdl.Init(sdl.INIT_VIDEO) == 0)
 
 	sdl.GL_SetAttribute(.CONTEXT_MAJOR_VERSION, OPENGL_MAJOR)
 	sdl.GL_SetAttribute(.CONTEXT_MINOR_VERSION, OPENGL_MINOR)
@@ -173,15 +188,23 @@ sdlInit :: proc() {
 
 	// gl.load_up_to(OPENGL_MAJOR, OPENGL_MINOR, sdl.GL_GetProcAddress())
 	sdl.SetRelativeMouseMode(true)
-
 	gl.Enable(gl.DEPTH_TEST)
+
+	vgCtx = nvg.Create({.ANTI_ALIAS, .STENCIL_STROKES})
+	fontId := nanovg.CreateFont(vgCtx, "Arial", "resources/fonts/Arial.ttf")
+
+	assert(fontId >= 0, "font creation failed")
+	assert(vgCtx != nil)
 	enableGlDebug()
 }
 sdlClean :: proc() {
 	using gs
 	assert(window != nil)
+	if vgCtx != nil do nanovg.DeleteInternal(vgCtx)
+
 	sdl.DestroyWindow(window)
 	sdl.Quit()
+
 }
 
 lastX: f64 = 0

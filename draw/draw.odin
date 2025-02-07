@@ -1,6 +1,7 @@
 package draw
 
 import "../gs"
+import "../physics"
 import "../shader"
 import "base:runtime"
 import "core:fmt"
@@ -10,12 +11,12 @@ import "core:mem"
 import vmem "core:mem/virtual"
 import gl "vendor:OpenGL"
 import "vendor:glfw"
-
 MAX_CUBES :: 1024 * 1024
 
 Cube :: struct {
-	color: vec3,
-	pos:   vec3,
+	using physics: physics.Physics,
+	color:         vec3,
+	pos:           vec3,
 }
 
 CubeProgram :: struct {
@@ -85,12 +86,15 @@ initCube :: proc() {
 // }
 addCube :: proc(cube: Cube) {
 	assert(cp.lastCubeIndex < MAX_CUBES - 1)
-
+	assert(cube.mass != 0)
 
 	cp.cubes[cp.lastCubeIndex] = cube
 	cp.lastCubeIndex += 1
 
 	pos := cube.pos
+	gl.BindVertexArray(cp.vao)
+
+
 	gl.BindBuffer(gl.ARRAY_BUFFER, cp.instanceVBO)
 	gl.BufferSubData(
 		gl.ARRAY_BUFFER,
@@ -122,6 +126,7 @@ addCubes :: proc(cubes: []Cube) {
 	colors := make([]vec3, len(cubes), context.temp_allocator)
 
 	for cube, i in cubes {
+		assert(cube.mass != 0)
 		positions[i] = cube.pos
 		colors[i] = linalg.normalize(cube.color)
 	}
@@ -142,6 +147,26 @@ addCubes :: proc(cubes: []Cube) {
 		raw_data(colors),
 	)
 
+}
+
+updateDrawings :: proc() {
+	for &cube in cp.cubes[:cp.lastCubeIndex] {
+		physics.applyGravity(&cube, cube.pos)
+		cube.pos += physics.applyKinematics(&cube, cube.pos, gs.deltaTime)
+	}
+	positions := make([]vec3, len(cp.cubes), context.temp_allocator)
+	for cube, i in cp.cubes {
+		positions[i] = cube.pos
+	}
+
+	gl.BindVertexArray(cp.vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, cp.instanceVBO)
+	gl.BufferSubData(
+		gl.ARRAY_BUFFER,
+		0,
+		int(cp.lastCubeIndex * size_of(vec3)),
+		raw_data(positions),
+	)
 }
 drawCubes :: proc() {
 	gl.UseProgram(cp.program)
